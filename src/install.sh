@@ -35,6 +35,31 @@ run() {
 
 exists() { command -v "$1" >/dev/null 2>&1; }
 
+detect_db_service() {
+  local preferred="$1"
+  local svc
+  local candidates=()
+
+  case "$preferred" in
+    mysql) candidates=("mysql" "mariadb" "mysqld") ;;
+    mariadb) candidates=("mariadb" "mysql" "mysqld") ;;
+    *) candidates=("mysql" "mariadb" "mysqld") ;;
+  esac
+
+  for svc in "${candidates[@]}"; do
+    if systemctl list-unit-files "${svc}.service" --no-legend 2>/dev/null | grep -q "^${svc}\.service"; then
+      echo "$svc"
+      return 0
+    fi
+    if systemctl status "${svc}" >/dev/null 2>&1; then
+      echo "$svc"
+      return 0
+    fi
+  done
+
+  echo "${candidates[0]}"
+}
+
 check_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || err "Please run as root"
 }
@@ -213,23 +238,7 @@ enable_services() {
     php_service="php-fpm"
   fi
 
-  if [[ "$DB_ENGINE" == "mariadb" ]]; then
-    if systemctl list-unit-files | grep -q '^mariadb\.service'; then
-      db_service="mariadb"
-    elif systemctl list-unit-files | grep -q '^mysql\.service'; then
-      db_service="mysql"
-    else
-      db_service="mysqld"
-    fi
-  else
-    if systemctl list-unit-files | grep -q '^mysql\.service'; then
-      db_service="mysql"
-    elif systemctl list-unit-files | grep -q '^mariadb\.service'; then
-      db_service="mariadb"
-    else
-      db_service="mysqld"
-    fi
-  fi
+  db_service="$(detect_db_service "$DB_ENGINE")"
 
   run "systemctl daemon-reload"
   run "systemctl enable --now nginx"
@@ -277,23 +286,7 @@ show_summary() {
   else
     php_service="php-fpm"
   fi
-  if [[ "$DB_ENGINE" == "mariadb" ]]; then
-    if systemctl list-unit-files | grep -q '^mariadb\.service'; then
-      db_service="mariadb"
-    elif systemctl list-unit-files | grep -q '^mysql\.service'; then
-      db_service="mysql"
-    else
-      db_service="mysqld"
-    fi
-  else
-    if systemctl list-unit-files | grep -q '^mysql\.service'; then
-      db_service="mysql"
-    elif systemctl list-unit-files | grep -q '^mariadb\.service'; then
-      db_service="mariadb"
-    else
-      db_service="mysqld"
-    fi
-  fi
+  db_service="$(detect_db_service "$DB_ENGINE")"
 
   echo
   log "INFO" "Install completed"
