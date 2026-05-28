@@ -9,6 +9,7 @@ OS_VER=""
 PHP_VER=""
 DB_ENGINE=""
 DB_VER=""
+DB_ROOT_PASSWORD=""
 
 _red() { printf '\033[1;31m%b\033[0m' "$1"; }
 _green() { printf '\033[1;32m%b\033[0m' "$1"; }
@@ -134,6 +135,13 @@ select_database() {
   done
 }
 
+read_db_root_password() {
+  local pw
+  read -r -s -p "Set database root password (leave empty to skip): " pw
+  echo
+  DB_ROOT_PASSWORD="$pw"
+}
+
 select_mariadb_version() {
   local choice
   echo "Choose MariaDB version:"
@@ -229,6 +237,41 @@ install_mysql() {
   fi
 }
 
+set_db_root_password_if_provided() {
+  local client escaped_pw current_pw svc
+
+  [[ -n "${DB_ROOT_PASSWORD}" ]] || {
+    log "INFO" "Skip setting database root password (empty input)"
+    return 0
+  }
+
+  client="mysql"
+  command -v mariadb >/dev/null 2>&1 && client="mariadb"
+  escaped_pw="$(printf "%s" "$DB_ROOT_PASSWORD" | sed "s/'/''/g")"
+
+  if "$client" -uroot -e "SELECT 1;" >/dev/null 2>&1; then
+    "$client" -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
+    "$client" -uroot -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
+    "$client" -uroot -e "FLUSH PRIVILEGES;" >/dev/null 2>&1 || true
+    log "INFO" "Database root password has been set"
+    return 0
+  fi
+
+  if [[ -t 0 ]]; then
+    read -r -s -p "Current database root password to apply new password: " current_pw
+    echo
+    if [[ -n "$current_pw" ]] && "$client" -uroot -p"$current_pw" -e "SELECT 1;" >/dev/null 2>&1; then
+      "$client" -uroot -p"$current_pw" -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
+      "$client" -uroot -p"$current_pw" -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
+      "$client" -uroot -p"$current_pw" -e "FLUSH PRIVILEGES;" >/dev/null 2>&1 || true
+      log "INFO" "Database root password has been updated"
+      return 0
+    fi
+  fi
+
+  log "WARN" "Could not set database root password automatically"
+}
+
 enable_services() {
   local php_service db_service
 
@@ -308,6 +351,7 @@ main() {
 
   select_php_version
   select_database
+  read_db_root_password
 
   log "INFO" "Selected PHP $PHP_VER"
   log "INFO" "Selected DB $DB_ENGINE $DB_VER"
@@ -322,6 +366,7 @@ main() {
   fi
 
   enable_services
+  set_db_root_password_if_provided
   create_menu_script
   show_summary
 }
