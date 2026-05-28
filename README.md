@@ -22,7 +22,7 @@ Core features:
 
 ### Option 1: One-line bootstrap (recommended)
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/hoangpham5694/LEMP-script/main/builds/get-simple-vps.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/hoangpham5694/LEMP-script/master/builds/get-simple-vps.sh)
 ```
 
 ### Option 2: Run from local files

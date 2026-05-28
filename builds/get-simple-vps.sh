@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_RAW_BASE_DEFAULT="https://raw.githubusercontent.com/hoangpham5694/LEMP-script/main"
+REPO_RAW_BASE_DEFAULT="https://raw.githubusercontent.com/hoangpham5694/LEMP-script/master"
 TARGET_DIR_DEFAULT="/opt/simple-vps"
 
 REPO_RAW_BASE="${REPO_RAW_BASE:-$REPO_RAW_BASE_DEFAULT}"
