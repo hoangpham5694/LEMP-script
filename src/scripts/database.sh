@@ -4,13 +4,18 @@ source "$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"
 check_root
 
 db_service_name() {
-  if systemctl list-unit-files | grep -q '^mariadb\.service'; then
-    echo "mariadb"
-  elif systemctl list-unit-files | grep -q '^mysql\.service'; then
-    echo "mysql"
-  else
-    echo "mysqld"
-  fi
+  local svc
+  for svc in mysql mariadb mysqld; do
+    if systemctl list-unit-files "${svc}.service" --no-legend 2>/dev/null | grep -q "^${svc}\.service"; then
+      echo "$svc"
+      return 0
+    fi
+    if systemctl status "$svc" >/dev/null 2>&1; then
+      echo "$svc"
+      return 0
+    fi
+  done
+  echo "mysql"
 }
 
 create_database_menu() {
@@ -48,8 +53,8 @@ create_database_menu() {
   echo "Database: $db_name"
 }
 
-svc="$(db_service_name)"
 while true; do
+  svc="$(db_service_name)"
   echo
   echo "Database management ($svc)"
   echo "1) Status"
