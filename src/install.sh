@@ -214,10 +214,21 @@ enable_services() {
   fi
 
   if [[ "$DB_ENGINE" == "mariadb" ]]; then
-    db_service="mariadb"
+    if systemctl list-unit-files | grep -q '^mariadb\.service'; then
+      db_service="mariadb"
+    elif systemctl list-unit-files | grep -q '^mysql\.service'; then
+      db_service="mysql"
+    else
+      db_service="mysqld"
+    fi
   else
-    db_service="mysqld"
-    systemctl list-unit-files | grep -q '^mysql\.service' && db_service="mysql"
+    if systemctl list-unit-files | grep -q '^mysql\.service'; then
+      db_service="mysql"
+    elif systemctl list-unit-files | grep -q '^mariadb\.service'; then
+      db_service="mariadb"
+    else
+      db_service="mysqld"
+    fi
   fi
 
   run "systemctl daemon-reload"
@@ -267,10 +278,21 @@ show_summary() {
     php_service="php-fpm"
   fi
   if [[ "$DB_ENGINE" == "mariadb" ]]; then
-    db_service="mariadb"
+    if systemctl list-unit-files | grep -q '^mariadb\.service'; then
+      db_service="mariadb"
+    elif systemctl list-unit-files | grep -q '^mysql\.service'; then
+      db_service="mysql"
+    else
+      db_service="mysqld"
+    fi
   else
-    db_service="mysqld"
-    systemctl list-unit-files | grep -q '^mysql\.service' && db_service="mysql"
+    if systemctl list-unit-files | grep -q '^mysql\.service'; then
+      db_service="mysql"
+    elif systemctl list-unit-files | grep -q '^mariadb\.service'; then
+      db_service="mariadb"
+    else
+      db_service="mysqld"
+    fi
   fi
 
   echo
