@@ -368,12 +368,32 @@ create_user_for_existing_database_menu() {
   db_pass="$(random_alnum 20)"
 
   echo "[DB] Creating user: ${db_user}@localhost"
-  db_exec_sql_with_auth "create user" "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
+  if ! db_exec_sql_with_auth "create user" "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';"; then
+    echo "[DB][FAIL] Step failed: create user"
+    return 1
+  fi
   echo "[DB] Setting password for user: ${db_user}@localhost"
-  db_exec_sql_with_auth "alter user password" "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
+  if ! db_exec_sql_with_auth "alter user password" "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';"; then
+    echo "[DB][FAIL] Step failed: alter user password"
+    return 1
+  fi
   echo "[DB] Granting privileges on ${db_name} to ${db_user}@localhost"
-  db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';" || return 1
-  db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;" || return 1
+  if ! db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';"; then
+    echo "[DB][FAIL] Step failed: grant privileges"
+    return 1
+  fi
+  if ! db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;"; then
+    echo "[DB][FAIL] Step failed: flush privileges"
+    return 1
+  fi
+
+  local user_count
+  user_count="$(db_query_with_auth_context "SELECT COUNT(*) FROM mysql.user WHERE user='${db_user}' AND host='localhost';" | head -n1 | tr -d '[:space:]' || true)"
+  if [[ "${user_count:-0}" != "1" ]]; then
+    echo "[DB][FAIL] Verification failed: user ${db_user}@localhost not found"
+    return 1
+  fi
+  echo "[DB][PASS] User exists: ${db_user}@localhost"
 
   echo
   echo "Database user created successfully"
