@@ -56,14 +56,26 @@ db_query_with_optional_password() {
     return 1
   fi
 
-  if "$client" -uroot -p"$current_pw" -e "$query" >/dev/null 2>&1; then
+  if MYSQL_PWD="$current_pw" "$client" -uroot -e "$query" >/dev/null 2>&1; then
     DB_ROOT_CURRENT_PASSWORD="$current_pw"
-    "$client" -uroot -p"$current_pw" -N -B -e "$query"
+    MYSQL_PWD="$current_pw" "$client" -uroot -N -B -e "$query"
     return 0
   fi
 
   echo "Cannot authenticate root user with provided password"
   return 1
+}
+
+db_query_with_auth_context() {
+  local query="$1"
+  local client
+  client="$(db_client_cmd)"
+
+  if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
+    MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -N -B -e "$query"
+  else
+    "$client" -uroot -N -B -e "$query"
+  fi
 }
 
 db_exec_sql_with_auth() {
@@ -73,7 +85,7 @@ db_exec_sql_with_auth() {
   client="$(db_client_cmd)"
 
   if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
-    if err_out="$("$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "$sql" 2>&1)"; then
+    if err_out="$(MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -e "$sql" 2>&1)"; then
       return 0
     fi
     echo "Database action failed (${action})"
@@ -94,7 +106,7 @@ db_exec_sql_with_auth() {
       return 1
     fi
 
-    if err_out="$("$client" -uroot -p"$current_pw" -e "$sql" 2>&1)"; then
+    if err_out="$(MYSQL_PWD="$current_pw" "$client" -uroot -e "$sql" 2>&1)"; then
       DB_ROOT_CURRENT_PASSWORD="$current_pw"
       return 0
     fi
@@ -310,7 +322,7 @@ create_database_with_optional_user() {
     db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';" || return 1
     db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;" || return 1
 
-    user_count="$(db_query_with_optional_password "SELECT COUNT(*) FROM mysql.user WHERE user='${db_user}' AND host='localhost';" | head -n1 | tr -d '[:space:]' || true)"
+    user_count="$(db_query_with_auth_context "SELECT COUNT(*) FROM mysql.user WHERE user='${db_user}' AND host='localhost';" | head -n1 | tr -d '[:space:]' || true)"
     if [[ "${user_count:-0}" != "1" ]]; then
       echo "Database action failed (verify created user)"
       echo "Detail: user ${db_user}@localhost was not found after creation"
