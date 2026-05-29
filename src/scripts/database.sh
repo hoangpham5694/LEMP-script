@@ -17,6 +17,7 @@ while true; do
   echo "5) Login SQL shell (root)"
   echo "6) Create database"
   echo "7) Set root password"
+  echo "8) Create user for existing database"
   echo "0) Back"
   read -r -p "Choose: " ch
   case "$ch" in
@@ -25,8 +26,21 @@ while true; do
     3) db_service_action "stop" "$svc" ;;
     4) db_service_action "restart" "$svc" ;;
     5) $(db_client_cmd) -uroot -p ;;
-    6) create_database_menu ;;
-    7) set_root_password_menu ;;
+    6)
+      if ! create_database_menu; then
+        echo "[DB][FAIL] Create database operation failed"
+      fi
+      ;;
+    7)
+      if ! set_root_password_menu; then
+        echo "[DB][FAIL] Set root password operation failed"
+      fi
+      ;;
+    8)
+      if ! create_user_for_existing_database_menu; then
+        echo "[DB][FAIL] Create user for existing database operation failed"
+      fi
+      ;;
     0) exit 0 ;;
     *) echo "Invalid" ;;
   esac

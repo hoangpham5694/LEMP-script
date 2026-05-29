@@ -56,14 +56,26 @@ db_query_with_optional_password() {
     return 1
   fi
 
-  if "$client" -uroot -p"$current_pw" -e "$query" >/dev/null 2>&1; then
+  if MYSQL_PWD="$current_pw" "$client" -uroot -e "$query" >/dev/null 2>&1; then
     DB_ROOT_CURRENT_PASSWORD="$current_pw"
-    "$client" -uroot -p"$current_pw" -N -B -e "$query"
+    MYSQL_PWD="$current_pw" "$client" -uroot -N -B -e "$query"
     return 0
   fi
 
   echo "Cannot authenticate root user with provided password"
   return 1
+}
+
+db_query_with_auth_context() {
+  local query="$1"
+  local client
+  client="$(db_client_cmd)"
+
+  if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
+    MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -N -B -e "$query"
+  else
+    "$client" -uroot -N -B -e "$query"
+  fi
 }
 
 db_exec_sql_with_auth() {
@@ -73,7 +85,7 @@ db_exec_sql_with_auth() {
   client="$(db_client_cmd)"
 
   if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
-    if err_out="$("$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "$sql" 2>&1)"; then
+    if err_out="$(MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -e "$sql" 2>&1)"; then
       return 0
     fi
     echo "Database action failed (${action})"
@@ -94,7 +106,7 @@ db_exec_sql_with_auth() {
       return 1
     fi
 
-    if err_out="$("$client" -uroot -p"$current_pw" -e "$sql" 2>&1)"; then
+    if err_out="$(MYSQL_PWD="$current_pw" "$client" -uroot -e "$sql" 2>&1)"; then
       DB_ROOT_CURRENT_PASSWORD="$current_pw"
       return 0
     fi
@@ -258,13 +270,20 @@ create_database_menu() {
     return
   fi
 
-  db_exec_sql "CREATE DATABASE IF NOT EXISTS \\`$db_name\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
   create_user="n"
   read -r -p "Create new user for this database? (y/N): " yn
   yn="${yn:-N}"
   [[ "$yn" =~ ^[Yy]$ ]] && create_user="y"
 
-  create_database_with_optional_user "$db_name" "$create_user"
+  if ! create_database_with_optional_user "$db_name" "$create_user"; then
+    echo
+    echo "Database operation failed"
+    echo "-----------------------------"
+    echo "Database: $db_name"
+    echo "Note: database/user may be partially created. Please verify and retry."
+    echo "-----------------------------"
+    return 1
+  fi
   db_user="$DB_CREATED_USER"
   db_pass="$DB_CREATED_PASSWORD"
 
@@ -272,28 +291,43 @@ create_database_menu() {
   echo "Database created successfully"
   echo "-----------------------------"
   echo "Database: $db_name"
-  echo "Database user: $db_user"
-  echo "Database password: $db_pass"
   echo "Host: localhost"
+  if [[ "$db_user" != "(not created)" ]]; then
+    echo "Database user: $db_user"
+    echo "Database password: $db_pass"
+  else
+    echo "Database user: (not created)"
+  fi
   echo "-----------------------------"
 }
 
 create_database_with_optional_user() {
   local db_name="$1"
   local create_user="${2:-n}"
-  local db_user db_pass user_prefix suffix
+  local db_user db_pass user_prefix suffix user_count
 
-  db_exec_sql_with_auth "create database" "CREATE DATABASE IF NOT EXISTS \\`$db_name\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || return 1
+  echo "[DB] Creating database: ${db_name}"
+  db_exec_sql_with_auth "create database" "CREATE DATABASE IF NOT EXISTS \`$db_name\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || return 1
 
   if [[ "$create_user" == "y" ]]; then
     user_prefix="${db_name:0:10}"
     suffix="$(random_alnum 4)"
     db_user="${user_prefix}${suffix}"
     db_pass="$(random_alnum 20)"
+    echo "[DB] Creating user: ${db_user}@localhost"
     db_exec_sql_with_auth "create user" "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
+    echo "[DB] Setting password for user: ${db_user}@localhost"
     db_exec_sql_with_auth "alter user password" "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
-    db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \\`$db_name\\`.* TO '$db_user'@'localhost';" || return 1
+    echo "[DB] Granting privileges on ${db_name} to ${db_user}@localhost"
+    db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';" || return 1
     db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;" || return 1
+
+    user_count="$(db_query_with_auth_context "SELECT COUNT(*) FROM mysql.user WHERE user='${db_user}' AND host='localhost';" | head -n1 | tr -d '[:space:]' || true)"
+    if [[ "${user_count:-0}" != "1" ]]; then
+      echo "Database action failed (verify created user)"
+      echo "Detail: user ${db_user}@localhost was not found after creation"
+      return 1
+    fi
   else
     db_user="(not created)"
     db_pass="(not created)"
@@ -303,4 +337,70 @@ create_database_with_optional_user() {
   DB_CREATED_USER="$db_user"
   DB_CREATED_PASSWORD="$db_pass"
   DB_CREATED_HOST="localhost"
+}
+
+create_user_for_existing_database_menu() {
+  local db_name db_exists yn db_user db_pass user_prefix suffix
+
+  ensure_db_root_auth || return 1
+
+  read -r -p "Enter existing database name: " db_name
+  if [[ -z "$db_name" ]]; then
+    echo "Database name cannot be empty"
+    return
+  fi
+  if ! valid_db_name "$db_name"; then
+    echo "Invalid database name."
+    echo "Rules: 1-64 chars, start with letter/_ , only letters/numbers/_"
+    echo "Disallowed names: mysql, sys, performance_schema, information_schema"
+    return
+  fi
+
+  db_exists="$(db_query_with_auth_context "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${db_name}' LIMIT 1;" | head -n1 | xargs || true)"
+  if [[ "$db_exists" != "$db_name" ]]; then
+    echo "Database does not exist: $db_name"
+    return
+  fi
+
+  user_prefix="${db_name:0:10}"
+  suffix="$(random_alnum 4)"
+  db_user="${user_prefix}${suffix}"
+  db_pass="$(random_alnum 20)"
+
+  echo "[DB] Creating user: ${db_user}@localhost"
+  if ! db_exec_sql_with_auth "create user" "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';"; then
+    echo "[DB][FAIL] Step failed: create user"
+    return 1
+  fi
+  echo "[DB] Setting password for user: ${db_user}@localhost"
+  if ! db_exec_sql_with_auth "alter user password" "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';"; then
+    echo "[DB][FAIL] Step failed: alter user password"
+    return 1
+  fi
+  echo "[DB] Granting privileges on ${db_name} to ${db_user}@localhost"
+  if ! db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';"; then
+    echo "[DB][FAIL] Step failed: grant privileges"
+    return 1
+  fi
+  if ! db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;"; then
+    echo "[DB][FAIL] Step failed: flush privileges"
+    return 1
+  fi
+
+  local user_count
+  user_count="$(db_query_with_auth_context "SELECT COUNT(*) FROM mysql.user WHERE user='${db_user}' AND host='localhost';" | head -n1 | tr -d '[:space:]' || true)"
+  if [[ "${user_count:-0}" != "1" ]]; then
+    echo "[DB][FAIL] Verification failed: user ${db_user}@localhost not found"
+    return 1
+  fi
+  echo "[DB][PASS] User exists: ${db_user}@localhost"
+
+  echo
+  echo "Database user created successfully"
+  echo "-----------------------------"
+  echo "Database: $db_name"
+  echo "Database user: $db_user"
+  echo "Database password: $db_pass"
+  echo "Host: localhost"
+  echo "-----------------------------"
 }
