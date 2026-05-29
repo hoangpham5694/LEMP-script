@@ -279,9 +279,13 @@ create_database_menu() {
   echo "Database created successfully"
   echo "-----------------------------"
   echo "Database: $db_name"
-  echo "Database user: $db_user"
-  echo "Database password: $db_pass"
   echo "Host: localhost"
+  if [[ "$db_user" != "(not created)" ]]; then
+    echo "Database user: $db_user"
+    echo "Database password: $db_pass"
+  else
+    echo "Database user: (not created)"
+  fi
   echo "-----------------------------"
 }
 
