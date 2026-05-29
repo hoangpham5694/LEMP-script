@@ -109,6 +109,15 @@ set_root_password_menu() {
   local client plugin auth has_password="n" yn new_pw confirm_pw escaped_pw
   client="$(db_client_cmd)"
 
+  client_exec_sql() {
+    local sql="$1"
+    local args=(-uroot)
+    if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
+      args+=("-p${DB_ROOT_CURRENT_PASSWORD}")
+    fi
+    "$client" "${args[@]}" -e "$sql"
+  }
+
   plugin="$(db_query_with_optional_password "SELECT plugin FROM mysql.user WHERE user='root' AND host='localhost' LIMIT 1;" | head -n1 || true)"
   auth="$(db_query_with_optional_password "SELECT authentication_string FROM mysql.user WHERE user='root' AND host='localhost' LIMIT 1;" | head -n1 || true)"
 
@@ -134,13 +143,47 @@ set_root_password_menu() {
 
   escaped_pw="$(sql_escape "$new_pw")"
 
+  set_root_password_with_password_auth() {
+    local root_host="$1"
+    local pw="$2"
+    local err_out=""
+
+    # MySQL 8+/Percona common syntax
+    if err_out="$(client_exec_sql \
+      "ALTER USER 'root'@'${root_host}' IDENTIFIED WITH caching_sha2_password BY '${pw}';" 2>&1)"; then
+      return 0
+    fi
+
+    # MySQL 5.7 and MariaDB compatible syntax
+    if err_out="$(client_exec_sql \
+      "ALTER USER 'root'@'${root_host}' IDENTIFIED WITH mysql_native_password BY '${pw}';" 2>&1)"; then
+      return 0
+    fi
+
+    # Generic fallback
+    if err_out="$(client_exec_sql \
+      "ALTER USER 'root'@'${root_host}' IDENTIFIED BY '${pw}';" 2>&1)"; then
+      return 0
+    fi
+
+    # MariaDB unix_socket fallback
+    if err_out="$(client_exec_sql \
+      "ALTER USER 'root'@'${root_host}' IDENTIFIED VIA mysql_native_password USING PASSWORD('${pw}');" 2>&1)"; then
+      return 0
+    fi
+
+    echo "Failed to update root@${root_host}"
+    echo "Detail: ${err_out}"
+    return 1
+  }
+
   if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
-    "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
-    "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
+    set_root_password_with_password_auth "localhost" "${escaped_pw}" || return 1
+    set_root_password_with_password_auth "127.0.0.1" "${escaped_pw}" || true
     "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "FLUSH PRIVILEGES;"
   else
-    "$client" -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
-    "$client" -uroot -e "ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
+    set_root_password_with_password_auth "localhost" "${escaped_pw}" || return 1
+    set_root_password_with_password_auth "127.0.0.1" "${escaped_pw}" || true
     "$client" -uroot -e "FLUSH PRIVILEGES;"
   fi
 
