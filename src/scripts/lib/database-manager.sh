@@ -263,7 +263,15 @@ create_database_menu() {
   yn="${yn:-N}"
   [[ "$yn" =~ ^[Yy]$ ]] && create_user="y"
 
-  create_database_with_optional_user "$db_name" "$create_user"
+  if ! create_database_with_optional_user "$db_name" "$create_user"; then
+    echo
+    echo "Database operation failed"
+    echo "-----------------------------"
+    echo "Database: $db_name"
+    echo "Note: database/user may be partially created. Please verify and retry."
+    echo "-----------------------------"
+    return 1
+  fi
   db_user="$DB_CREATED_USER"
   db_pass="$DB_CREATED_PASSWORD"
 
@@ -280,8 +288,9 @@ create_database_menu() {
 create_database_with_optional_user() {
   local db_name="$1"
   local create_user="${2:-n}"
-  local db_user db_pass user_prefix suffix
+  local db_user db_pass user_prefix suffix user_count
 
+  echo "[DB] Creating database: ${db_name}"
   db_exec_sql_with_auth "create database" "CREATE DATABASE IF NOT EXISTS \`$db_name\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || return 1
 
   if [[ "$create_user" == "y" ]]; then
@@ -289,10 +298,20 @@ create_database_with_optional_user() {
     suffix="$(random_alnum 4)"
     db_user="${user_prefix}${suffix}"
     db_pass="$(random_alnum 20)"
+    echo "[DB] Creating user: ${db_user}@localhost"
     db_exec_sql_with_auth "create user" "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
+    echo "[DB] Setting password for user: ${db_user}@localhost"
     db_exec_sql_with_auth "alter user password" "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
+    echo "[DB] Granting privileges on ${db_name} to ${db_user}@localhost"
     db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';" || return 1
     db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;" || return 1
+
+    user_count="$(db_query_with_optional_password "SELECT COUNT(*) FROM mysql.user WHERE user='${db_user}' AND host='localhost';" | head -n1 | tr -d '[:space:]' || true)"
+    if [[ "${user_count:-0}" != "1" ]]; then
+      echo "Database action failed (verify created user)"
+      echo "Detail: user ${db_user}@localhost was not found after creation"
+      return 1
+    fi
   else
     db_user="(not created)"
     db_pass="(not created)"
