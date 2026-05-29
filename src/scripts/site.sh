@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
-source "$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/lib/database-manager.sh"
 check_root
 
 write_php_site_conf() {
@@ -58,7 +60,7 @@ setup_blank_laravel_site() {
 }
 
 setup_wordpress_site() {
-  local php_sock conf tmpdir setup_db db_name db_user db_pass user_prefix suffix
+  local php_sock conf tmpdir setup_db db_name db_user db_pass
   php_sock="$(detect_php_fpm_socket || true)"; [[ -n "$php_sock" ]] || { echo "Cannot detect php-fpm socket."; return; }
   mkdir -p "$SITE_ROOT"
   tmpdir="$(mktemp -d)"
@@ -75,12 +77,9 @@ setup_wordpress_site() {
     read -r -p "Enter database name (default: ${SITE_NAME//[^A-Za-z0-9_]/_}): " db_name
     db_name="${db_name:-${SITE_NAME//[^A-Za-z0-9_]/_}}"
     valid_db_name "$db_name" || { echo "Invalid database name"; return; }
-    user_prefix="${db_name:0:10}"; suffix="$(random_alnum 4)"; db_user="${user_prefix}${suffix}"; db_pass="$(random_alnum 20)"
-    db_exec_sql "CREATE DATABASE IF NOT EXISTS \`$db_name\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-    db_exec_sql "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';"
-    db_exec_sql "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';"
-    db_exec_sql "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';"
-    db_exec_sql "FLUSH PRIVILEGES;"
+    create_database_with_optional_user "$db_name" "y"
+    db_user="$DB_CREATED_USER"
+    db_pass="$DB_CREATED_PASSWORD"
     if [[ -f "${SITE_ROOT}/wp-config-sample.php" ]]; then
       cp -f "${SITE_ROOT}/wp-config-sample.php" "${SITE_ROOT}/wp-config.php"
       sed -i.bak "s/database_name_here/${db_name}/" "${SITE_ROOT}/wp-config.php"

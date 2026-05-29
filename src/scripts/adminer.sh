@@ -6,7 +6,16 @@ check_root
 ensure_adminer_state_dir() { mkdir -p "$(dirname "$ADMINER_STATE_FILE")"; }
 load_adminer_state() {
   ADMINER_PORT=""; ADMINER_ENABLED="on"
-  [[ -f "$ADMINER_STATE_FILE" ]] && source "$ADMINER_STATE_FILE"
+  if [[ -f "$ADMINER_STATE_FILE" ]]; then
+    while IFS='=' read -r k v; do
+      k="$(printf '%s' "$k" | tr -d '\r' | xargs)"
+      v="$(printf '%s' "$v" | tr -d '\r' | sed -e 's/^"//' -e 's/"$//')"
+      case "$k" in
+        ADMINER_PORT) ADMINER_PORT="$v" ;;
+        ADMINER_ENABLED) ADMINER_ENABLED="$v" ;;
+      esac
+    done < "$ADMINER_STATE_FILE"
+  fi
 }
 save_adminer_state() {
   ensure_adminer_state_dir
@@ -29,7 +38,10 @@ write_adminer_conf() {
   [[ "${ADMINER_ENABLED}" == "off" ]] && access_line="deny all;" || access_line="allow all;"
   render_template_to_file "nginx/adminer.conf.tpl" "$ADMINER_NGINX_CONF" \
     "PORT=${port}" "ADMINER_ROOT=${ADMINER_ROOT}" "ACCESS_LINE=${access_line}" \
-    "PHP_SOCK=${php_sock}" "HTPASSWD_FILE=${ADMINER_HTPASSWD}"
+    "PHP_SOCK=${php_sock}" "HTPASSWD_FILE=${ADMINER_HTPASSWD}" || {
+      echo "Failed to render Adminer nginx config template"
+      return 1
+    }
 }
 show_adminer_access() {
   load_adminer_state
@@ -43,13 +55,15 @@ show_adminer_access() {
 install_adminer() {
   local source_file port php_sock random_pass hash
   adminer_installed && { show_adminer_access; return; }
+  command -v openssl >/dev/null 2>&1 || { echo "openssl is required"; return; }
+  command -v nginx >/dev/null 2>&1 || { echo "nginx is required"; return; }
   source_file="$(resolve_adminer_source || true)"
   [[ -n "$source_file" ]] || { echo "Cannot find libs/${ADMINER_SOURCE_NAME}."; return; }
   while true; do read -r -p "Enter Adminer port: " port; is_valid_port "$port" && break; echo "Invalid port"; done
   php_sock="$(detect_php_fpm_socket || true)"; [[ -n "$php_sock" ]] || { echo "Cannot detect php-fpm socket."; return; }
   mkdir -p "$ADMINER_ROOT"; cp -f "$source_file" "$ADMINER_FILE"; chmod 644 "$ADMINER_FILE"
   ADMINER_PORT="$port"; ADMINER_ENABLED="on"; save_adminer_state
-  write_adminer_conf "$ADMINER_PORT" "$php_sock"
+  write_adminer_conf "$ADMINER_PORT" "$php_sock" || return
   if [[ ! -f "$ADMINER_HTPASSWD" ]]; then
     random_pass="$(openssl rand -base64 20 | tr -d '\n')"; hash="$(openssl passwd -apr1 "$random_pass")"
     printf '%s:%s\n' "adminer" "$hash" > "$ADMINER_HTPASSWD"; chmod 640 "$ADMINER_HTPASSWD"
