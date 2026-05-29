@@ -342,6 +342,8 @@ create_database_with_optional_user() {
 create_user_for_existing_database_menu() {
   local db_name db_exists yn db_user db_pass user_prefix suffix
 
+  ensure_db_root_auth || return 1
+
   read -r -p "Enter existing database name: " db_name
   if [[ -z "$db_name" ]]; then
     echo "Database name cannot be empty"
