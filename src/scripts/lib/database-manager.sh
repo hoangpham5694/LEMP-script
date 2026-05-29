@@ -179,12 +179,14 @@ set_root_password_menu() {
 
   if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
     set_root_password_with_password_auth "localhost" "${escaped_pw}" || return 1
+    DB_ROOT_CURRENT_PASSWORD="$new_pw"
     set_root_password_with_password_auth "127.0.0.1" "${escaped_pw}" || true
     "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "FLUSH PRIVILEGES;"
   else
     set_root_password_with_password_auth "localhost" "${escaped_pw}" || return 1
+    DB_ROOT_CURRENT_PASSWORD="$new_pw"
     set_root_password_with_password_auth "127.0.0.1" "${escaped_pw}" || true
-    "$client" -uroot -e "FLUSH PRIVILEGES;"
+    "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "FLUSH PRIVILEGES;"
   fi
 
   echo "Root password updated successfully"
