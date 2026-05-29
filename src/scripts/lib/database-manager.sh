@@ -258,7 +258,6 @@ create_database_menu() {
     return
   fi
 
-  db_exec_sql "CREATE DATABASE IF NOT EXISTS \\`$db_name\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
   create_user="n"
   read -r -p "Create new user for this database? (y/N): " yn
   yn="${yn:-N}"
@@ -283,7 +282,7 @@ create_database_with_optional_user() {
   local create_user="${2:-n}"
   local db_user db_pass user_prefix suffix
 
-  db_exec_sql_with_auth "create database" "CREATE DATABASE IF NOT EXISTS \\`$db_name\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || return 1
+  db_exec_sql_with_auth "create database" "CREATE DATABASE IF NOT EXISTS \`$db_name\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || return 1
 
   if [[ "$create_user" == "y" ]]; then
     user_prefix="${db_name:0:10}"
@@ -292,7 +291,7 @@ create_database_with_optional_user() {
     db_pass="$(random_alnum 20)"
     db_exec_sql_with_auth "create user" "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
     db_exec_sql_with_auth "alter user password" "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
-    db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \\`$db_name\\`.* TO '$db_user'@'localhost';" || return 1
+    db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';" || return 1
     db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;" || return 1
   else
     db_user="(not created)"
