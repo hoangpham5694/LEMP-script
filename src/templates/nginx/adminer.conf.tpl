@@ -21,6 +21,6 @@ server {
         deny all;
     }
 
-    auth_basic "Adminer Protected";
-    auth_basic_user_file {{HTPASSWD_FILE}};
+{{AUTH_BASIC_LINE}}
+{{AUTH_FILE_LINE}}
 }
