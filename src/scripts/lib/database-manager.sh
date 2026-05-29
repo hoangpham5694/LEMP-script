@@ -140,16 +140,19 @@ ensure_db_root_auth() {
 set_root_password_menu() {
   local client plugin auth has_password="n" yn new_pw confirm_pw escaped_pw
   client="$(db_client_cmd)"
+  local db_version is_mariadb="n"
 
   ensure_db_root_auth || return 1
+  db_version="$(db_query_with_optional_password "SELECT VERSION();" | head -n1 || true)"
+  [[ "$db_version" == *MariaDB* ]] && is_mariadb="y"
 
   client_exec_sql() {
     local sql="$1"
-    local args=(-uroot)
     if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
-      args+=("-p${DB_ROOT_CURRENT_PASSWORD}")
+      MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -e "$sql"
+    else
+      "$client" -uroot -e "$sql"
     fi
-    "$client" "${args[@]}" -e "$sql"
   }
 
   plugin="$(client_exec_sql "SELECT plugin FROM mysql.user WHERE user='root' AND host='localhost' LIMIT 1;" 2>/dev/null | tail -n1 | xargs || true)"
@@ -201,9 +204,11 @@ set_root_password_menu() {
     fi
 
     # MariaDB unix_socket fallback
-    if err_out="$(client_exec_sql \
-      "ALTER USER 'root'@'${root_host}' IDENTIFIED VIA mysql_native_password USING PASSWORD('${pw}');" 2>&1)"; then
-      return 0
+    if [[ "$is_mariadb" == "y" ]]; then
+      if err_out="$(client_exec_sql \
+        "ALTER USER 'root'@'${root_host}' IDENTIFIED VIA mysql_native_password USING PASSWORD('${pw}');" 2>&1)"; then
+        return 0
+      fi
     fi
 
     echo "Failed to update root@${root_host}"
