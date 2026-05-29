@@ -338,3 +338,47 @@ create_database_with_optional_user() {
   DB_CREATED_PASSWORD="$db_pass"
   DB_CREATED_HOST="localhost"
 }
+
+create_user_for_existing_database_menu() {
+  local db_name db_exists yn db_user db_pass user_prefix suffix
+
+  read -r -p "Enter existing database name: " db_name
+  if [[ -z "$db_name" ]]; then
+    echo "Database name cannot be empty"
+    return
+  fi
+  if ! valid_db_name "$db_name"; then
+    echo "Invalid database name."
+    echo "Rules: 1-64 chars, start with letter/_ , only letters/numbers/_"
+    echo "Disallowed names: mysql, sys, performance_schema, information_schema"
+    return
+  fi
+
+  db_exists="$(db_query_with_auth_context "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${db_name}' LIMIT 1;" | head -n1 | xargs || true)"
+  if [[ "$db_exists" != "$db_name" ]]; then
+    echo "Database does not exist: $db_name"
+    return
+  fi
+
+  user_prefix="${db_name:0:10}"
+  suffix="$(random_alnum 4)"
+  db_user="${user_prefix}${suffix}"
+  db_pass="$(random_alnum 20)"
+
+  echo "[DB] Creating user: ${db_user}@localhost"
+  db_exec_sql_with_auth "create user" "CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
+  echo "[DB] Setting password for user: ${db_user}@localhost"
+  db_exec_sql_with_auth "alter user password" "ALTER USER '$db_user'@'localhost' IDENTIFIED BY '$db_pass';" || return 1
+  echo "[DB] Granting privileges on ${db_name} to ${db_user}@localhost"
+  db_exec_sql_with_auth "grant privileges" "GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'localhost';" || return 1
+  db_exec_sql_with_auth "flush privileges" "FLUSH PRIVILEGES;" || return 1
+
+  echo
+  echo "Database user created successfully"
+  echo "-----------------------------"
+  echo "Database: $db_name"
+  echo "Database user: $db_user"
+  echo "Database password: $db_pass"
+  echo "Host: localhost"
+  echo "-----------------------------"
+}
