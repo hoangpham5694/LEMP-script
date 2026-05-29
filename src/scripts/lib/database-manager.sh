@@ -105,9 +105,43 @@ db_exec_sql_with_auth() {
   return 1
 }
 
+ensure_db_root_auth() {
+  local client current_pw
+  client="$(db_client_cmd)"
+
+  if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
+    if "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "SELECT 1;" >/dev/null 2>&1; then
+      return 0
+    fi
+    DB_ROOT_CURRENT_PASSWORD=""
+  fi
+
+  if "$client" -uroot -e "SELECT 1;" >/dev/null 2>&1; then
+    DB_ROOT_CURRENT_PASSWORD=""
+    return 0
+  fi
+
+  read -r -s -p "Current root password (required): " current_pw
+  echo
+  if [[ -z "$current_pw" ]]; then
+    echo "Current root password is required"
+    return 1
+  fi
+
+  if "$client" -uroot -p"$current_pw" -e "SELECT 1;" >/dev/null 2>&1; then
+    DB_ROOT_CURRENT_PASSWORD="$current_pw"
+    return 0
+  fi
+
+  echo "Cannot authenticate root user with provided password"
+  return 1
+}
+
 set_root_password_menu() {
   local client plugin auth has_password="n" yn new_pw confirm_pw escaped_pw
   client="$(db_client_cmd)"
+
+  ensure_db_root_auth || return 1
 
   client_exec_sql() {
     local sql="$1"
@@ -118,8 +152,8 @@ set_root_password_menu() {
     "$client" "${args[@]}" -e "$sql"
   }
 
-  plugin="$(db_query_with_optional_password "SELECT plugin FROM mysql.user WHERE user='root' AND host='localhost' LIMIT 1;" | head -n1 || true)"
-  auth="$(db_query_with_optional_password "SELECT authentication_string FROM mysql.user WHERE user='root' AND host='localhost' LIMIT 1;" | head -n1 || true)"
+  plugin="$(client_exec_sql "SELECT plugin FROM mysql.user WHERE user='root' AND host='localhost' LIMIT 1;" 2>/dev/null | tail -n1 | xargs || true)"
+  auth="$(client_exec_sql "SELECT authentication_string FROM mysql.user WHERE user='root' AND host='localhost' LIMIT 1;" 2>/dev/null | tail -n1 | xargs || true)"
 
   if [[ -n "$auth" && "$plugin" != "auth_socket" && "$plugin" != "unix_socket" ]]; then
     has_password="y"
@@ -190,6 +224,19 @@ set_root_password_menu() {
   fi
 
   echo "Root password updated successfully"
+  echo
+  echo "Verification:"
+  if "$client" -uroot -p"${new_pw}" -e "SELECT 1;" >/dev/null 2>&1; then
+    echo "PASS: login with new password works"
+  else
+    echo "FAIL: login with new password failed"
+  fi
+
+  if "$client" -uroot -e "SELECT 1;" >/dev/null 2>&1; then
+    echo "FAIL: login without password still works"
+  else
+    echo "PASS: login without password is blocked"
+  fi
 }
 
 create_database_menu() {
