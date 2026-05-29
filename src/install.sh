@@ -237,6 +237,31 @@ install_mysql() {
   fi
 }
 
+install_composer() {
+  local installer checksum expected sig_file installer_file
+  installer_file="/tmp/composer-setup.php"
+  sig_file="/tmp/composer-setup.sig"
+
+  if command -v composer >/dev/null 2>&1; then
+    log "INFO" "Composer already installed: $(composer --version 2>/dev/null | head -n1)"
+    return 0
+  fi
+
+  run "curl -fsSL https://getcomposer.org/installer -o ${installer_file}"
+  run "curl -fsSL https://composer.github.io/installer.sig -o ${sig_file}"
+
+  checksum="$(php -r \"echo hash_file('sha384', '${installer_file}');\")"
+  expected="$(tr -d '\r\n' < "${sig_file}")"
+  if [[ "$checksum" != "$expected" ]]; then
+    rm -f "${installer_file}" "${sig_file}"
+    err "Composer installer checksum verification failed"
+  fi
+
+  run "php ${installer_file} --install-dir=/usr/local/bin --filename=composer"
+  rm -f "${installer_file}" "${sig_file}"
+  run "composer --version"
+}
+
 set_db_root_password_if_provided() {
   local client escaped_pw current_pw svc
 
@@ -358,6 +383,7 @@ main() {
 
   install_nginx
   install_php
+  install_composer
 
   if [[ "$DB_ENGINE" == "mariadb" ]]; then
     install_mariadb

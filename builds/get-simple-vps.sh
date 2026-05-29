@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_RAW_BASE_DEFAULT="https://raw.githubusercontent.com/hoangpham5694/LEMP-script/master"
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+VERSION_FILE_URL_DEFAULT="https://raw.githubusercontent.com/hoangpham5694/LEMP-script/master/builds/release-version.txt"
+VERSION_FILE_URL="${VERSION_FILE_URL:-$VERSION_FILE_URL_DEFAULT}"
+
+RELEASE_TAG_DEFAULT_FALLBACK="v1.0.0"
+RELEASE_TAG_DEFAULT="$(curl -fsSL "$VERSION_FILE_URL" 2>/dev/null | head -n1 | tr -d '\r' | xargs || true)"
+RELEASE_TAG_DEFAULT="${RELEASE_TAG_DEFAULT:-$RELEASE_TAG_DEFAULT_FALLBACK}"
+
+RELEASE_PAGE_DEFAULT="https://github.com/hoangpham5694/LEMP-script/releases/tag/${RELEASE_TAG_DEFAULT}"
+ARCHIVE_URL_DEFAULT="https://github.com/hoangpham5694/LEMP-script/archive/refs/tags/${RELEASE_TAG_DEFAULT}.tar.gz"
 TARGET_DIR_DEFAULT="/opt/simple-vps"
 
-REPO_RAW_BASE="${REPO_RAW_BASE:-$REPO_RAW_BASE_DEFAULT}"
+RELEASE_TAG="${RELEASE_TAG:-$RELEASE_TAG_DEFAULT}"
+RELEASE_PAGE="${RELEASE_PAGE:-$RELEASE_PAGE_DEFAULT}"
+ARCHIVE_URL="${ARCHIVE_URL:-$ARCHIVE_URL_DEFAULT}"
 TARGET_DIR="${TARGET_DIR:-$TARGET_DIR_DEFAULT}"
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
@@ -14,109 +25,78 @@ else
 fi
 
 log() {
-  echo "[get-simple-vps] $*"
+  echo "[install-from-release] $*"
 }
 
-download() {
-  local url="$1"
-  local out="$2"
-  log "Downloading: $url"
-  if ! curl -fsSL "$url" -o "$out"; then
-    echo "Failed to download: $url" >&2
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required command: $1" >&2
     exit 1
-  fi
+  }
 }
 
-verify_required_files() {
-  local missing=0
-  local required=(
-    "$TARGET_DIR/install.sh"
-    "$TARGET_DIR/simple-vps.sh"
-    "$TARGET_DIR/libs/adminer-5.4.2.php"
-    "$TARGET_DIR/templates/nginx/adminer.conf.tpl"
-    "$TARGET_DIR/templates/nginx/site-php.conf.tpl"
-    "$TARGET_DIR/templates/nginx/site-laravel.conf.tpl"
-    "$TARGET_DIR/templates/site/blank-index.php"
-    "$TARGET_DIR/templates/site/laravel-public-index.php"
-    "$TARGET_DIR/templates/profile/simple-vps.sh"
-    "$TARGET_DIR/scripts/common.sh"
-    "$TARGET_DIR/scripts/nginx.sh"
-    "$TARGET_DIR/scripts/database.sh"
-    "$TARGET_DIR/scripts/adminer.sh"
-    "$TARGET_DIR/scripts/site.sh"
-    "$TARGET_DIR/scripts/firewall.sh"
-    "$TARGET_DIR/scripts/cache.sh"
-    "$TARGET_DIR/scripts/tools.sh"
-    "$TARGET_DIR/scripts/cronjob.sh"
-  )
+resolve_archive_url() {
+  local tag="$1"
+  local tag_alt=""
+  local url=""
+  local candidates=()
 
-  for f in "${required[@]}"; do
-    if [[ ! -f "$f" ]]; then
-      echo "Missing required file: $f" >&2
-      missing=1
+  if [[ "$tag" == v* ]]; then
+    tag_alt="${tag#v}"
+  else
+    tag_alt="v${tag}"
+  fi
+
+  candidates+=("https://github.com/hoangpham5694/LEMP-script/archive/refs/tags/${tag}.tar.gz")
+  candidates+=("https://codeload.github.com/hoangpham5694/LEMP-script/tar.gz/refs/tags/${tag}")
+  candidates+=("https://github.com/hoangpham5694/LEMP-script/archive/refs/tags/${tag_alt}.tar.gz")
+  candidates+=("https://codeload.github.com/hoangpham5694/LEMP-script/tar.gz/refs/tags/${tag_alt}")
+
+  for url in "${candidates[@]}"; do
+    if curl -fsIL "$url" >/dev/null 2>&1; then
+      echo "$url"
+      return 0
     fi
   done
 
-  (( missing == 0 )) || exit 1
+  return 1
 }
 
 main() {
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "curl is required" >&2
-    exit 1
+  need_cmd curl
+  need_cmd tar
+
+  local tmp archive extract_dir release_root resolved_archive_url
+  tmp="$(mktemp -d)"
+  archive="${tmp}/release.tar.gz"
+  extract_dir="${tmp}/extract"
+
+  log "Release page: ${RELEASE_PAGE}"
+  resolved_archive_url="$(resolve_archive_url "$RELEASE_TAG" || true)"
+  if [[ -z "$resolved_archive_url" ]]; then
+    resolved_archive_url="$ARCHIVE_URL"
   fi
+  log "Downloading archive: ${resolved_archive_url}"
+  curl -fL "$resolved_archive_url" -o "$archive"
 
-  log "Installing into: $TARGET_DIR"
-  $SUDO mkdir -p "$TARGET_DIR/libs" "$TARGET_DIR/templates/nginx" "$TARGET_DIR/templates/site" "$TARGET_DIR/templates/profile" "$TARGET_DIR/scripts"
+  mkdir -p "$extract_dir"
+  tar -xzf "$archive" -C "$extract_dir"
 
-  download "$REPO_RAW_BASE/src/install.sh" "/tmp/simple-vps-install.sh"
-  download "$REPO_RAW_BASE/src/simple-vps.sh" "/tmp/simple-vps-menu.sh"
-  download "$REPO_RAW_BASE/src/scripts/common.sh" "/tmp/simple-vps-common.sh"
-  download "$REPO_RAW_BASE/src/scripts/nginx.sh" "/tmp/simple-vps-nginx.sh"
-  download "$REPO_RAW_BASE/src/scripts/database.sh" "/tmp/simple-vps-database.sh"
-  download "$REPO_RAW_BASE/src/scripts/adminer.sh" "/tmp/simple-vps-adminer.sh"
-  download "$REPO_RAW_BASE/src/scripts/site.sh" "/tmp/simple-vps-site.sh"
-  download "$REPO_RAW_BASE/src/scripts/firewall.sh" "/tmp/simple-vps-firewall.sh"
-  download "$REPO_RAW_BASE/src/scripts/cache.sh" "/tmp/simple-vps-cache.sh"
-  download "$REPO_RAW_BASE/src/scripts/tools.sh" "/tmp/simple-vps-tools.sh"
-  download "$REPO_RAW_BASE/src/scripts/cronjob.sh" "/tmp/simple-vps-cronjob.sh"
-  download "$REPO_RAW_BASE/src/libs/adminer-5.4.2.php" "/tmp/adminer-5.4.2.php"
-  download "$REPO_RAW_BASE/src/templates/nginx/adminer.conf.tpl" "/tmp/adminer.conf.tpl"
-  download "$REPO_RAW_BASE/src/templates/nginx/site-php.conf.tpl" "/tmp/site-php.conf.tpl"
-  download "$REPO_RAW_BASE/src/templates/nginx/site-laravel.conf.tpl" "/tmp/site-laravel.conf.tpl"
-  download "$REPO_RAW_BASE/src/templates/site/blank-index.php" "/tmp/blank-index.php"
-  download "$REPO_RAW_BASE/src/templates/site/laravel-public-index.php" "/tmp/laravel-public-index.php"
-  download "$REPO_RAW_BASE/src/templates/profile/simple-vps.sh" "/tmp/profile-simple-vps.sh"
+  release_root="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+  [[ -n "$release_root" ]] || { echo "Cannot locate extracted release directory" >&2; exit 1; }
 
-  $SUDO install -m 755 "/tmp/simple-vps-install.sh" "$TARGET_DIR/install.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-menu.sh" "$TARGET_DIR/simple-vps.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-common.sh" "$TARGET_DIR/scripts/common.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-nginx.sh" "$TARGET_DIR/scripts/nginx.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-database.sh" "$TARGET_DIR/scripts/database.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-adminer.sh" "$TARGET_DIR/scripts/adminer.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-site.sh" "$TARGET_DIR/scripts/site.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-firewall.sh" "$TARGET_DIR/scripts/firewall.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-cache.sh" "$TARGET_DIR/scripts/cache.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-tools.sh" "$TARGET_DIR/scripts/tools.sh"
-  $SUDO install -m 755 "/tmp/simple-vps-cronjob.sh" "$TARGET_DIR/scripts/cronjob.sh"
-  $SUDO install -m 644 "/tmp/adminer-5.4.2.php" "$TARGET_DIR/libs/adminer-5.4.2.php"
-  $SUDO install -m 644 "/tmp/adminer.conf.tpl" "$TARGET_DIR/templates/nginx/adminer.conf.tpl"
-  $SUDO install -m 644 "/tmp/site-php.conf.tpl" "$TARGET_DIR/templates/nginx/site-php.conf.tpl"
-  $SUDO install -m 644 "/tmp/site-laravel.conf.tpl" "$TARGET_DIR/templates/nginx/site-laravel.conf.tpl"
-  $SUDO install -m 644 "/tmp/blank-index.php" "$TARGET_DIR/templates/site/blank-index.php"
-  $SUDO install -m 644 "/tmp/laravel-public-index.php" "$TARGET_DIR/templates/site/laravel-public-index.php"
-  $SUDO install -m 644 "/tmp/profile-simple-vps.sh" "$TARGET_DIR/templates/profile/simple-vps.sh"
+  [[ -f "${release_root}/src/install.sh" ]] || { echo "Missing src/install.sh in release" >&2; exit 1; }
+  [[ -f "${release_root}/src/simple-vps.sh" ]] || { echo "Missing src/simple-vps.sh in release" >&2; exit 1; }
 
-  rm -f /tmp/simple-vps-install.sh /tmp/simple-vps-menu.sh /tmp/simple-vps-common.sh \
-    /tmp/simple-vps-nginx.sh /tmp/simple-vps-database.sh /tmp/simple-vps-adminer.sh \
-    /tmp/simple-vps-site.sh /tmp/simple-vps-firewall.sh /tmp/simple-vps-cache.sh /tmp/simple-vps-tools.sh /tmp/simple-vps-cronjob.sh /tmp/adminer-5.4.2.php \
-    /tmp/adminer.conf.tpl /tmp/site-php.conf.tpl /tmp/site-laravel.conf.tpl \
-    /tmp/blank-index.php /tmp/laravel-public-index.php /tmp/profile-simple-vps.sh
-
-  verify_required_files
+  log "Installing release ${RELEASE_TAG} into ${TARGET_DIR}"
+  $SUDO rm -rf "$TARGET_DIR"
+  $SUDO mkdir -p "$TARGET_DIR"
+  $SUDO cp -a "${release_root}/." "$TARGET_DIR/"
 
   log "Starting installer..."
-  $SUDO bash "$TARGET_DIR/install.sh"
+  $SUDO bash "$TARGET_DIR/src/install.sh"
+
+  rm -rf "$tmp"
 }
 
 main "$@"
