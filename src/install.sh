@@ -250,7 +250,7 @@ install_composer() {
   run "curl -fsSL https://getcomposer.org/installer -o ${installer_file}"
   run "curl -fsSL https://composer.github.io/installer.sig -o ${sig_file}"
 
-  checksum="$(php -r \"echo hash_file('sha384', '${installer_file}');\")"
+  checksum="$(php -r "echo hash_file('sha384', '${installer_file}');")"
   expected="$(tr -d '\r\n' < "${sig_file}")"
   if [[ "$checksum" != "$expected" ]]; then
     rm -f "${installer_file}" "${sig_file}"
