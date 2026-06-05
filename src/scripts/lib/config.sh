@@ -110,6 +110,22 @@ project_config_set_many() {
   done
 }
 
+project_config_bootstrap_if_missing() {
+  [[ -f "$APP_CONFIG_FILE" ]] && return 0
+
+  project_config_set_many \
+    "MIGRATION_VERSION" "1.0.0" \
+    "MYSQL_ROOT_PASSWORD" "" \
+    "PHP_VERSION" "$(project_config_detect_php_version)" \
+    "NGINX_VERSION" "$(project_config_detect_nginx_version)" \
+    "DB_ENGINE" "$(project_config_detect_database_engine)" \
+    "DB_VERSION" "$(project_config_detect_database_version "${DB_ENGINE:-}")" \
+    "ADMINER_PORT" "" \
+    "ADMINER_ENABLED" "" \
+    "ADMINER_USERNAME" "" \
+    "ADMINER_PASSWORD" ""
+}
+
 project_config_detect_php_version() {
   php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || true
 }
