@@ -120,6 +120,10 @@ sync_runtime_files() {
   if [[ -f "${src_dir}/libs/adminer-5.4.2.php" ]]; then
     $SUDO install -m 644 "${src_dir}/libs/adminer-5.4.2.php" /usr/local/share/simple-vps/libs/adminer-5.4.2.php
   fi
+  if [[ -d "${TARGET_DIR}/src/migration" ]]; then
+    $SUDO mkdir -p /usr/local/share/simple-vps/migration
+    $SUDO cp -a "${TARGET_DIR}/src/migration/." /usr/local/share/simple-vps/migration/
+  fi
   $SUDO chmod +x /usr/local/share/simple-vps/scripts/*.sh
   if [[ -f "${src_dir}/templates/profile/simple-vps.sh" ]]; then
     $SUDO install -m 644 "${src_dir}/templates/profile/simple-vps.sh" /etc/profile.d/simple-vps.sh

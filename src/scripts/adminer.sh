@@ -20,26 +20,19 @@ open_adminer_port_in_firewall() {
   fi
 }
 
-ensure_adminer_state_dir() { mkdir -p "$(dirname "$ADMINER_STATE_FILE")"; }
 load_adminer_state() {
-  ADMINER_PORT=""; ADMINER_ENABLED="on"
-  if [[ -f "$ADMINER_STATE_FILE" ]]; then
-    while IFS='=' read -r k v; do
-      k="$(printf '%s' "$k" | tr -d '\r' | xargs)"
-      v="$(printf '%s' "$v" | tr -d '\r' | sed -e 's/^"//' -e 's/"$//')"
-      case "$k" in
-        ADMINER_PORT) ADMINER_PORT="$v" ;;
-        ADMINER_ENABLED) ADMINER_ENABLED="$v" ;;
-      esac
-    done < "$ADMINER_STATE_FILE"
-  fi
+  project_config_load || true
+  ADMINER_PORT="${ADMINER_PORT:-}"
+  ADMINER_ENABLED="${ADMINER_ENABLED:-on}"
+  ADMINER_USERNAME="${ADMINER_USERNAME:-}"
+  ADMINER_PASSWORD="${ADMINER_PASSWORD:-}"
 }
 save_adminer_state() {
-  ensure_adminer_state_dir
-  cat > "$ADMINER_STATE_FILE" <<STATE
-ADMINER_PORT="${ADMINER_PORT}"
-ADMINER_ENABLED="${ADMINER_ENABLED}"
-STATE
+  project_config_set_many \
+    "ADMINER_PORT" "${ADMINER_PORT}" \
+    "ADMINER_ENABLED" "${ADMINER_ENABLED}" \
+    "ADMINER_USERNAME" "${ADMINER_USERNAME}" \
+    "ADMINER_PASSWORD" "${ADMINER_PASSWORD}"
 }
 adminer_installed() { [[ -f "$ADMINER_FILE" && -f "$ADMINER_NGINX_CONF" ]]; }
 resolve_adminer_source() {
@@ -87,13 +80,16 @@ install_adminer() {
   php_sock="$(detect_php_fpm_socket || true)"; [[ -n "$php_sock" ]] || { echo "Cannot detect php-fpm socket."; return; }
   mkdir -p "$ADMINER_ROOT"; cp -f "$source_file" "$ADMINER_FILE"; chmod 644 "$ADMINER_FILE"
   ADMINER_PORT="$port"; ADMINER_ENABLED="on"; save_adminer_state
-  write_adminer_conf "$ADMINER_PORT" "$php_sock" || return
   open_adminer_port_in_firewall "$ADMINER_PORT"
   if [[ ! -f "$ADMINER_HTPASSWD" ]]; then
     random_pass="$(openssl rand -base64 20 | tr -d '\n')"; hash="$(openssl passwd -apr1 "$random_pass")"
     printf '%s:%s\n' "adminer" "$hash" > "$ADMINER_HTPASSWD"; chmod 640 "$ADMINER_HTPASSWD"
+    ADMINER_USERNAME="adminer"
+    ADMINER_PASSWORD="$random_pass"
+    save_adminer_state
     echo "Username: adminer"; echo "Password: ${random_pass}"
   fi
+  write_adminer_conf "$ADMINER_PORT" "$php_sock" || return
   reload_nginx; show_adminer_access
 }
 change_adminer_port() {
@@ -105,12 +101,22 @@ change_adminer_port() {
   ADMINER_PORT="$new_port"; save_adminer_state; write_adminer_conf "$ADMINER_PORT" "$php_sock"; open_adminer_port_in_firewall "$ADMINER_PORT"; reload_nginx; show_adminer_access
 }
 set_adminer_password() {
-  local user pass suggested hash
+  local user pass suggested hash php_sock
   adminer_installed || { echo "Adminer is not installed"; return; }
+  load_adminer_state
+  if [[ -z "${ADMINER_PORT}" && -f "$ADMINER_NGINX_CONF" ]]; then
+    ADMINER_PORT="$(awk '/^[[:space:]]*listen[[:space:]]+[0-9]+;/{gsub(/;/, "", $2); print $2; exit}' "$ADMINER_NGINX_CONF")"
+  fi
+  [[ -n "${ADMINER_PORT}" ]] || { echo "Cannot determine Adminer port."; return; }
+  php_sock="$(detect_php_fpm_socket || true)"; [[ -n "$php_sock" ]] || { echo "Cannot detect php-fpm socket."; return; }
   suggested="$(openssl rand -base64 24 | tr -d '\n')"; echo "Suggested strong password: ${suggested}"
   read -r -p "Enter username: " user; [[ -n "$user" ]] || { echo "Username cannot be empty"; return; }
   read -r -s -p "Enter password: " pass; echo; [[ -n "$pass" ]] || { echo "Password cannot be empty"; return; }
   hash="$(openssl passwd -apr1 "$pass")"; printf '%s:%s\n' "$user" "$hash" > "$ADMINER_HTPASSWD"; chmod 640 "$ADMINER_HTPASSWD"
+  ADMINER_USERNAME="$user"
+  ADMINER_PASSWORD="$pass"
+  save_adminer_state
+  write_adminer_conf "$ADMINER_PORT" "$php_sock" || return
   reload_nginx; echo "Basic auth updated"
 }
 toggle_adminer_access() {
@@ -130,6 +136,9 @@ remove_adminer_basic_auth() {
   php_sock="$(detect_php_fpm_socket || true)"
   [[ -n "$php_sock" ]] || { echo "Cannot detect php-fpm socket."; return; }
   rm -f "$ADMINER_HTPASSWD"
+  ADMINER_USERNAME=""
+  ADMINER_PASSWORD=""
+  save_adminer_state
   write_adminer_conf "$ADMINER_PORT" "$php_sock" || return
   reload_nginx
   echo "Adminer basic auth removed"

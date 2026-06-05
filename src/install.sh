@@ -2,6 +2,11 @@
 set -euo pipefail
 trap 'echo; echo "[ERROR] Script interrupted"; exit 1' INT TERM
 
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+MIGRATION_DIR="${SCRIPT_DIR}/migration"
+source "${SCRIPT_DIR}/scripts/lib/config.sh"
+source "${SCRIPT_DIR}/scripts/lib/migration.sh"
+
 LOG_FILE="/var/log/simple-vps-install.log"
 PM_TYPE=""
 OS_ID=""
@@ -9,7 +14,7 @@ OS_VER=""
 PHP_VER=""
 DB_ENGINE=""
 DB_VER=""
-DB_ROOT_PASSWORD=""
+MYSQL_ROOT_PASSWORD=""
 
 _red() { printf '\033[1;31m%b\033[0m' "$1"; }
 _green() { printf '\033[1;32m%b\033[0m' "$1"; }
@@ -139,7 +144,7 @@ read_db_root_password() {
   local pw
   read -r -s -p "Set database root password (leave empty to skip): " pw
   echo
-  DB_ROOT_PASSWORD="$pw"
+  MYSQL_ROOT_PASSWORD="$pw"
 }
 
 select_mariadb_version() {
@@ -265,14 +270,14 @@ install_composer() {
 set_db_root_password_if_provided() {
   local client escaped_pw current_pw svc
 
-  [[ -n "${DB_ROOT_PASSWORD}" ]] || {
+  [[ -n "${MYSQL_ROOT_PASSWORD}" ]] || {
     log "INFO" "Skip setting database root password (empty input)"
     return 0
   }
 
   client="mysql"
   command -v mariadb >/dev/null 2>&1 && client="mariadb"
-  escaped_pw="$(printf "%s" "$DB_ROOT_PASSWORD" | sed "s/'/''/g")"
+  escaped_pw="$(printf "%s" "$MYSQL_ROOT_PASSWORD" | sed "s/'/''/g")"
 
   if "$client" -uroot -e "SELECT 1;" >/dev/null 2>&1; then
     "$client" -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${escaped_pw}';" >/dev/null 2>&1 || true
@@ -295,6 +300,27 @@ set_db_root_password_if_provided() {
   fi
 
   log "WARN" "Could not set database root password automatically"
+}
+
+write_install_config() {
+  local php_version nginx_version db_version
+
+  php_version="$(project_config_detect_php_version)"
+  nginx_version="$(project_config_detect_nginx_version)"
+  db_version="$(project_config_detect_database_version "$DB_ENGINE")"
+
+  project_config_set_many \
+    "PHP_VERSION" "$php_version" \
+    "NGINX_VERSION" "$nginx_version" \
+    "DB_ENGINE" "$DB_ENGINE" \
+    "DB_VERSION" "$db_version" \
+    "MYSQL_VERSION" "$db_version" \
+    "MIGRATION_VERSION" "1.0.0" \
+    "MYSQL_ROOT_PASSWORD" "$MYSQL_ROOT_PASSWORD" \
+    "ADMINER_PORT" "" \
+    "ADMINER_ENABLED" "" \
+    "ADMINER_USERNAME" "" \
+    "ADMINER_PASSWORD" ""
 }
 
 enable_services() {
@@ -345,6 +371,13 @@ create_menu_script() {
   else
     log "WARN" "Missing ${script_dir}/templates/profile/simple-vps.sh"
   fi
+
+  if [[ -d "${script_dir}/migration" ]]; then
+    run "mkdir -p /usr/local/share/simple-vps/migration"
+    run "cp -a ${script_dir}/migration/. /usr/local/share/simple-vps/migration/"
+  else
+    log "WARN" "Missing ${script_dir}/migration directory"
+  fi
 }
 
 show_summary() {
@@ -393,7 +426,9 @@ main() {
 
   enable_services
   set_db_root_password_if_provided
+  write_install_config
   create_menu_script
+  project_migration_run_pending
   show_summary
 }
 
