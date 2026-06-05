@@ -23,6 +23,7 @@ run_update() {
 
   bash "$updater"
   source "${SCRIPT_DIR}/lib/migration.sh"
+  project_config_bootstrap_if_missing
   project_migration_run_pending
   project_config_refresh_versions || true
 }
