@@ -43,6 +43,29 @@ resolve_adminer_source() {
   done
   return 1
 }
+
+adminer_htpasswd_group() {
+  if getent group www-data >/dev/null 2>&1; then
+    echo "www-data"
+  elif getent group nginx >/dev/null 2>&1; then
+    echo "nginx"
+  else
+    echo ""
+  fi
+}
+
+write_adminer_htpasswd() {
+  local user="$1" password="$2" group hash
+
+  group="$(adminer_htpasswd_group)"
+  [[ -n "$group" ]] || { echo "Cannot determine nginx group for Adminer auth file"; return 1; }
+
+  hash="$(openssl passwd -apr1 "$password")"
+  printf '%s:%s\n' "$user" "$hash" > "$ADMINER_HTPASSWD"
+  chown root:"$group" "$ADMINER_HTPASSWD"
+  chmod 640 "$ADMINER_HTPASSWD"
+}
+
 write_adminer_conf() {
   local port="$1" php_sock="$2" access_line auth_basic_line auth_file_line
   [[ "${ADMINER_ENABLED}" == "off" ]] && access_line="deny all;" || access_line="allow all;"
@@ -82,8 +105,8 @@ install_adminer() {
   ADMINER_PORT="$port"; ADMINER_ENABLED="on"; save_adminer_state
   open_adminer_port_in_firewall "$ADMINER_PORT"
   if [[ ! -f "$ADMINER_HTPASSWD" ]]; then
-    random_pass="$(openssl rand -base64 20 | tr -d '\n')"; hash="$(openssl passwd -apr1 "$random_pass")"
-    printf '%s:%s\n' "adminer" "$hash" > "$ADMINER_HTPASSWD"; chmod 640 "$ADMINER_HTPASSWD"
+    random_pass="$(openssl rand -base64 20 | tr -d '\n')"
+    write_adminer_htpasswd "adminer" "$random_pass"
     ADMINER_USERNAME="adminer"
     ADMINER_PASSWORD="$random_pass"
     save_adminer_state
@@ -112,7 +135,7 @@ set_adminer_password() {
   suggested="$(openssl rand -base64 24 | tr -d '\n')"; echo "Suggested strong password: ${suggested}"
   read -r -p "Enter username: " user; [[ -n "$user" ]] || { echo "Username cannot be empty"; return; }
   read -r -s -p "Enter password: " pass; echo; [[ -n "$pass" ]] || { echo "Password cannot be empty"; return; }
-  hash="$(openssl passwd -apr1 "$pass")"; printf '%s:%s\n' "$user" "$hash" > "$ADMINER_HTPASSWD"; chmod 640 "$ADMINER_HTPASSWD"
+  write_adminer_htpasswd "$user" "$pass"
   ADMINER_USERNAME="$user"
   ADMINER_PASSWORD="$pass"
   save_adminer_state
