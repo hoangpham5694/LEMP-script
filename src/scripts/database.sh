@@ -25,7 +25,11 @@ while true; do
     2) db_service_action "start" "$svc" ;;
     3) db_service_action "stop" "$svc" ;;
     4) db_service_action "restart" "$svc" ;;
-    5) $(db_client_cmd) -uroot -p ;;
+    5)
+      if ! db_open_root_shell; then
+        echo "[DB][FAIL] Login SQL shell failed"
+      fi
+      ;;
     6)
       if ! create_database_menu; then
         echo "[DB][FAIL] Create database operation failed"

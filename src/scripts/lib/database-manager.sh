@@ -39,14 +39,86 @@ sql_escape() {
   printf "%s" "$1" | sed "s/'/''/g"
 }
 
+db_root_password_from_config() {
+  if [[ -n "${MYSQL_ROOT_PASSWORD:-}" ]]; then
+    printf '%s\n' "$MYSQL_ROOT_PASSWORD"
+  fi
+}
+
+db_log_using_config_password() {
+  echo "[DB][INFO] Using MYSQL_ROOT_PASSWORD from .env" >&2
+}
+
+db_try_root_auth_with_password() {
+  local client="$1"
+  local password="$2"
+
+  [[ -n "$password" ]] || return 1
+  "$client" -uroot -p"$password" -e "SELECT 1;" >/dev/null 2>&1
+}
+
+db_open_root_shell() {
+  local client config_pw current_pw
+  client="$(db_client_cmd)"
+  config_pw="$(db_root_password_from_config || true)"
+
+  if [[ -n "$config_pw" ]]; then
+    if db_try_root_auth_with_password "$client" "$config_pw"; then
+      db_log_using_config_password
+      MYSQL_PWD="$config_pw" "$client" -uroot
+      return 0
+    fi
+  fi
+
+  if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
+    if db_try_root_auth_with_password "$client" "$DB_ROOT_CURRENT_PASSWORD"; then
+      MYSQL_PWD="$DB_ROOT_CURRENT_PASSWORD" "$client" -uroot
+      return 0
+    fi
+  fi
+
+  read -r -s -p "Current root password (required): " current_pw
+  echo
+  if [[ -z "$current_pw" ]]; then
+    echo "Current root password is required"
+    return 1
+  fi
+
+  if db_try_root_auth_with_password "$client" "$current_pw"; then
+    DB_ROOT_CURRENT_PASSWORD="$current_pw"
+    MYSQL_PWD="$current_pw" "$client" -uroot
+    return 0
+  fi
+
+  echo "Cannot authenticate root user with provided password"
+  return 1
+}
+
 db_query_with_optional_password() {
   local query="$1"
-  local client current_pw
+  local client current_pw config_pw
   client="$(db_client_cmd)"
 
   if "$client" -uroot -e "$query" >/dev/null 2>&1; then
     "$client" -uroot -N -B -e "$query"
     return 0
+  fi
+
+  config_pw="$(db_root_password_from_config || true)"
+  if [[ -n "$config_pw" ]]; then
+    if MYSQL_PWD="$config_pw" "$client" -uroot -e "$query" >/dev/null 2>&1; then
+      db_log_using_config_password
+      DB_ROOT_CURRENT_PASSWORD="$config_pw"
+      MYSQL_PWD="$config_pw" "$client" -uroot -N -B -e "$query"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
+    if MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -e "$query" >/dev/null 2>&1; then
+      MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -N -B -e "$query"
+      return 0
+    fi
   fi
 
   read -r -s -p "Current root password (required): " current_pw
@@ -81,8 +153,17 @@ db_query_with_auth_context() {
 db_exec_sql_with_auth() {
   local action="$1"
   local sql="$2"
-  local client current_pw err_out
+  local client current_pw err_out config_pw
   client="$(db_client_cmd)"
+
+  config_pw="$(db_root_password_from_config || true)"
+  if [[ -n "$config_pw" ]]; then
+    if err_out="$(MYSQL_PWD="$config_pw" "$client" -uroot -e "$sql" 2>&1)"; then
+      db_log_using_config_password
+      DB_ROOT_CURRENT_PASSWORD="$config_pw"
+      return 0
+    fi
+  fi
 
   if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
     if err_out="$(MYSQL_PWD="${DB_ROOT_CURRENT_PASSWORD}" "$client" -uroot -e "$sql" 2>&1)"; then
@@ -118,11 +199,20 @@ db_exec_sql_with_auth() {
 }
 
 ensure_db_root_auth() {
-  local client current_pw
+  local client current_pw config_pw
   client="$(db_client_cmd)"
 
+  config_pw="$(db_root_password_from_config || true)"
+  if [[ -n "$config_pw" ]]; then
+    if db_try_root_auth_with_password "$client" "$config_pw"; then
+      db_log_using_config_password
+      DB_ROOT_CURRENT_PASSWORD="$config_pw"
+      return 0
+    fi
+  fi
+
   if [[ -n "${DB_ROOT_CURRENT_PASSWORD:-}" ]]; then
-    if "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "SELECT 1;" >/dev/null 2>&1; then
+    if db_try_root_auth_with_password "$client" "$DB_ROOT_CURRENT_PASSWORD"; then
       return 0
     fi
     DB_ROOT_CURRENT_PASSWORD=""
@@ -239,6 +329,9 @@ set_root_password_menu() {
     set_root_password_with_password_auth "127.0.0.1" "${escaped_pw}" || true
     "$client" -uroot -p"${DB_ROOT_CURRENT_PASSWORD}" -e "FLUSH PRIVILEGES;"
   fi
+
+  project_config_set_many \
+    "MYSQL_ROOT_PASSWORD" "$new_pw"
 
   echo "Root password updated successfully"
   echo

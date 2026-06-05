@@ -22,6 +22,9 @@ run_update() {
   fi
 
   bash "$updater"
+  source "${SCRIPT_DIR}/lib/migration.sh"
+  project_migration_run_pending
+  project_config_refresh_versions || true
 }
 
 while true; do
