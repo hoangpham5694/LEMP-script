@@ -1,0 +1,34 @@
+services:
+  ubuntu-vps:
+    build:
+      context: .
+      dockerfile: docker/ubuntu-vps/Dockerfile
+    container_name: simple-vps-ubuntu
+    privileged: true
+    stdin_open: true
+    tty: true
+    environment:
+      container: docker
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8088:8088"
+      - "1880-1999:1880-1999"
+      - "1994:1994"
+    volumes:
+      - ./:/workspace
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - simple-vps-etc:/etc/simple-vps
+      - simple-vps-www:/var/www
+      - simple-vps-nginx:/etc/nginx
+      - simple-vps-mysql:/var/lib/mysql
+      - simple-vps-usr-local-share:/usr/local/share/simple-vps
+    working_dir: /workspace
+    command: ["/sbin/init"]
+
+volumes:
+  simple-vps-etc:
+  simple-vps-www:
+  simple-vps-nginx:
+  simple-vps-mysql:
+  simple-vps-usr-local-share:

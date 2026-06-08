@@ -37,6 +37,26 @@ During installation, the script asks for:
 
 After installation, command `simple-vps` is installed into `/usr/local/bin/simple-vps`.
 
+## Local Docker test
+You can test the scripts locally on Ubuntu with systemd using Docker Compose:
+
+```bash
+docker compose up -d --build
+docker compose exec ubuntu-vps bash
+```
+
+Inside the container:
+
+```bash
+sudo bash src/install.sh
+```
+
+Notes:
+- The container is built from Ubuntu 22.04 with systemd enabled.
+- Ports `80`, `443`, `8088`, and `1994` are mapped to the host for common web/UI testing.
+- Persistent volumes are configured for `/etc/simple-vps`, `/etc/nginx`, `/var/www`, and `/var/lib/mysql`.
+- This is close to a VPS, but still not identical to a full VM.
+
 ## How to use
 Run the management menu:
 ```bash
