@@ -3,6 +3,10 @@ set -euo pipefail
 source "$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/common.sh"
 check_root
 
+COLOR_GREEN=$'\033[32m'
+COLOR_RED=$'\033[31m'
+COLOR_RESET=$'\033[0m'
+
 list_php_fpm_services() {
   systemctl list-unit-files --type=service 2>/dev/null | awk '/^php([0-9]+\.[0-9]+-fpm|\-fpm)\.service/ {print $1}'
 }
@@ -11,10 +15,8 @@ detect_primary_php_fpm_service() {
   local svc
   while IFS= read -r svc; do
     svc="${svc%.service}"
-    if systemctl status "$svc" >/dev/null 2>&1; then
-      echo "$svc"
-      return 0
-    fi
+    echo "$svc"
+    return 0
   done < <(list_php_fpm_services)
 
   if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^php-fpm\.service'; then
@@ -49,6 +51,20 @@ php_service_action() {
     echo "Failed: ${action} ${svc}"
   fi
   show_php_status "$svc"
+}
+
+php_toggle_action() {
+  local svc="$1"
+  if [[ -z "$svc" ]]; then
+    echo "No PHP-FPM service detected"
+    return
+  fi
+
+  if systemctl is-active --quiet "$svc"; then
+    php_service_action "stop" "$svc"
+  else
+    php_service_action "start" "$svc"
+  fi
 }
 
 show_php_info() {
@@ -109,7 +125,8 @@ list_php_plugins() {
 
 install_php_plugin() {
   local plugin pm php_ver pkg
-  read -r -p "Enter plugin name (example: redis, imagick, mbstring): " plugin
+  read -r -p "Enter plugin name (example: redis, imagick, mbstring, 0 to cancel): " plugin
+  [[ "$plugin" != "0" ]] || { echo "Cancelled"; return; }
   [[ -n "$plugin" ]] || { echo "Plugin name is required"; return; }
 
   pm="$(detect_pm)"
@@ -190,27 +207,34 @@ while true; do
   echo
   echo "PHP management"
   echo "Current PHP-FPM service: ${svc:-not found}"
+  if [[ -n "$svc" ]] && systemctl is-active --quiet "$svc"; then
+    echo -e "Status: ${COLOR_GREEN}active${COLOR_RESET}"
+  else
+    echo -e "Status: ${COLOR_RED}inactive${COLOR_RESET}"
+  fi
   echo "1) Show PHP info"
-  echo "2) Status"
-  echo "3) Start"
-  echo "4) Stop"
-  echo "5) Restart"
-  echo "6) Reload"
-  echo "7) Install PHP plugin"
-  echo "8) List PHP plugins"
-  echo "9) Edit php.ini"
+  if [[ -n "$svc" ]] && systemctl is-active --quiet "$svc"; then
+    echo "2) Stop"
+  else
+    echo "2) Start"
+  fi
+  echo "3) Status"
+  echo "4) Restart"
+  echo "5) Reload"
+  echo "6) Install PHP plugin"
+  echo "7) List PHP plugins"
+  echo "8) Edit php.ini"
   echo "0) Back"
   read -r -p "Choose: " ch
   case "$ch" in
     1) show_php_info ;;
-    2) show_php_status "$svc" ;;
-    3) php_service_action "start" "$svc" ;;
-    4) php_service_action "stop" "$svc" ;;
-    5) php_service_action "restart" "$svc" ;;
-    6) php_service_action "reload" "$svc" ;;
-    7) install_php_plugin ;;
-    8) list_php_plugins ;;
-    9) edit_php_ini ;;
+    2) php_toggle_action "$svc" ;;
+    3) show_php_status "$svc" ;;
+    4) php_service_action "restart" "$svc" ;;
+    5) php_service_action "reload" "$svc" ;;
+    6) install_php_plugin ;;
+    7) list_php_plugins ;;
+    8) edit_php_ini ;;
     0) exit 0 ;;
     *) echo "Invalid" ;;
   esac
