@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP_CONFIG_FILE="${APP_CONFIG_FILE:-/etc/simple-vps/.env}"
 APP_CONFIG_LEGACY_ADMINER_FILE="${APP_CONFIG_LEGACY_ADMINER_FILE:-/etc/simple-vps/adminer.env}"
+APP_CONFIG_SECRET_FILE="${APP_CONFIG_SECRET_FILE:-/etc/simple-vps/.secret}"
 
 project_config_dir() {
   dirname "$APP_CONFIG_FILE"
@@ -16,6 +17,56 @@ project_config_quote() {
   printf '%q' "$1"
 }
 
+project_config_secret_ensure() {
+  local tmp old_umask
+
+  project_config_ensure_dir
+  if [[ ! -f "$APP_CONFIG_SECRET_FILE" ]]; then
+    tmp="$(mktemp)"
+    old_umask="$(umask)"
+    umask 077
+    openssl rand -hex 32 > "$tmp"
+    umask "$old_umask"
+    mv -f "$tmp" "$APP_CONFIG_SECRET_FILE"
+    chmod 600 "$APP_CONFIG_SECRET_FILE"
+  fi
+}
+
+project_config_encrypt_secret() {
+  local value="$1" encrypted
+
+  [[ -n "$value" ]] || return 0
+  project_config_secret_ensure
+  encrypted="$(printf '%s' "$value" | openssl enc -aes-256-cbc -pbkdf2 -salt -a -A -pass file:"$APP_CONFIG_SECRET_FILE" 2>/dev/null | tr -d '\n')"
+  printf 'ENC::%s' "$encrypted"
+}
+
+project_config_decrypt_secret() {
+  local value="$1" payload decrypted
+
+  case "$value" in
+    ENC::*)
+      payload="${value#ENC::}"
+      [[ -f "$APP_CONFIG_SECRET_FILE" ]] || return 1
+      decrypted="$(printf '%s' "$payload" | openssl enc -d -aes-256-cbc -pbkdf2 -a -A -pass file:"$APP_CONFIG_SECRET_FILE" 2>/dev/null | tr -d '\n')"
+      printf '%s' "$decrypted"
+      ;;
+    *)
+      printf '%s' "$value"
+      ;;
+  esac
+}
+
+project_config_decrypt_loaded_secrets() {
+  local decrypted
+
+  if [[ -n "${MYSQL_ROOT_PASSWORD:-}" ]]; then
+    if decrypted="$(project_config_decrypt_secret "$MYSQL_ROOT_PASSWORD" 2>/dev/null)"; then
+      MYSQL_ROOT_PASSWORD="$decrypted"
+    fi
+  fi
+}
+
 project_config_load() {
   if [[ -f "$APP_CONFIG_LEGACY_ADMINER_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -26,6 +77,8 @@ project_config_load() {
     # shellcheck disable=SC1090
     source "$APP_CONFIG_FILE"
   fi
+
+  project_config_decrypt_loaded_secrets
 }
 
 project_config_write_tmp() {
@@ -38,6 +91,10 @@ project_config_set() {
   local key="$1"
   local value="$2"
   local tmp line line_key replaced="0"
+
+  if [[ "$key" == "MYSQL_ROOT_PASSWORD" && -n "$value" ]]; then
+    value="$(project_config_encrypt_secret "$value")"
+  fi
 
   project_config_ensure_dir
   tmp="$(project_config_write_tmp)"
