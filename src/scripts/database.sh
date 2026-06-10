@@ -6,24 +6,40 @@ source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/lib/database-manager.sh"
 check_root
 
+db_toggle_action() {
+  local svc="$1"
+  if systemctl is-active --quiet "$svc"; then
+    db_service_action "stop" "$svc"
+  else
+    db_service_action "start" "$svc"
+  fi
+}
+
 while true; do
   svc="$(db_service_name)"
   echo
   echo "Database management ($svc)"
+  if systemctl is-active --quiet "$svc"; then
+    echo "Status: active"
+  else
+    echo "Status: inactive"
+  fi
   echo "1) Status"
-  echo "2) Start"
-  echo "3) Stop"
-  echo "4) Restart"
-  echo "5) Login SQL shell (root)"
-  echo "6) Create database"
-  echo "7) Set root password"
-  echo "8) Create user for existing database"
+  if systemctl is-active --quiet "$svc"; then
+    echo "2) Stop"
+    echo "4) Restart"
+    echo "5) Login SQL shell (root)"
+    echo "6) Create database"
+    echo "7) Set root password"
+    echo "8) Create user for existing database"
+  else
+    echo "2) Start"
+  fi
   echo "0) Back"
   read -r -p "Choose: " ch
   case "$ch" in
     1) show_db_status "$svc" ;;
-    2) db_service_action "start" "$svc" ;;
-    3) db_service_action "stop" "$svc" ;;
+    2) db_toggle_action "$svc" ;;
     4) db_service_action "restart" "$svc" ;;
     5)
       if ! db_open_root_shell; then
